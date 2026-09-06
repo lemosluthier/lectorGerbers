@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lector-gerbers"
+version = "0.1.0"
+description = "Herramientas iniciales para inspeccionar archivos Gerber RS-274X."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "" }]
+dependencies = ["shapely>=2.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+gerber-info = "lector_gerbers.cli:main"
+drill-info = "lector_gerbers.excellon_cli:main"
+gcode-preview = "lector_gerbers.simulation_cli:main"
+gerber-cnc-gui = "lector_gerbers.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
