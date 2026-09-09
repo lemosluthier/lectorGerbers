@@ -12,12 +12,13 @@ def render_svg(
     margin: float = 5.0,
     mirror_x: bool = False,
     origin_lower_left: bool = False,
+    reference_bounds: tuple[float, float, float, float] | None = None,
 ) -> str:
     """Devuelve un SVG con los trazos y flashes de una capa Gerber."""
     if mirror_x or origin_lower_left:
         return render_board(
             (info,), scale=scale, margin=margin, mirror_x=mirror_x,
-            origin_lower_left=origin_lower_left
+            origin_lower_left=origin_lower_left, reference_bounds=reference_bounds,
         )
     if not info.primitives:
         return _empty_svg(info.path.name)
@@ -79,6 +80,7 @@ def render_board(
     margin: float = 5.0,
     mirror_x: bool = False,
     origin_lower_left: bool = False,
+    reference_bounds: tuple[float, float, float, float] | None = None,
 ) -> str:
     """Renderiza varias capas Gerber y taladros Excellon en un SVG común."""
     gerber_points = [
@@ -92,16 +94,25 @@ def render_board(
     if not points:
         return _empty_svg("placa")
 
-    min_x = min(point[0] for point in points)
-    max_x = max(point[0] for point in points)
-    min_y = min(point[1] for point in points)
-    max_y = max(point[1] for point in points)
-    transformed_points = [
-        _transform_point(point, min_x, max_x, min_y, mirror_x, origin_lower_left)
-        for point in points
+    if reference_bounds is None:
+        min_x = min(point[0] for point in points)
+        max_x = max(point[0] for point in points)
+        min_y = min(point[1] for point in points)
+        max_y = max(point[1] for point in points)
+    else:
+        min_x, max_x, min_y, max_y = reference_bounds
+    # El ancla de dibujo se calcula a partir de las esquinas del marco (min/max
+    # de X e Y), no de los puntos efectivamente dibujados: con reference_bounds
+    # el contenido puede no tocar los bordes del marco, y anclar sobre su propio
+    # bounding box lo desplazaria a la esquina del canvas en vez de mostrarlo en
+    # su posicion real dentro de la placa de referencia.
+    transformed_corners = [
+        _transform_point((x, y), min_x, max_x, min_y, mirror_x, origin_lower_left)
+        for x in (min_x, max_x)
+        for y in (min_y, max_y)
     ]
-    transformed_min_x = min(point[0] for point in transformed_points)
-    transformed_max_y = max(point[1] for point in transformed_points)
+    transformed_min_x = min(point[0] for point in transformed_corners)
+    transformed_max_y = max(point[1] for point in transformed_corners)
     width = max((max_x - min_x) * scale + margin * 2, margin * 2)
     height = max((max_y - min_y) * scale + margin * 2, margin * 2)
     elements = []
@@ -200,9 +211,12 @@ def _transform_point(
 ) -> tuple[float, float]:
     x, y = point
     if mirror_x:
+        # El espejo ya reubica el eje X en [0, max_x - min_x]; restar min_x
+        # de nuevo lo correria fuera de rango cuando min_x != 0.
         x = max_x - x
-    if origin_lower_left:
+    elif origin_lower_left:
         x -= min_x
+    if origin_lower_left:
         y -= min_y
     return x, y
 

@@ -79,6 +79,9 @@ def _group_hits(hits: tuple[DrillHit, ...]) -> tuple[tuple[str, tuple[DrillHit, 
     return tuple((tool, tuple(tool_hits)) for tool, tool_hits in groups.items())
 
 
+_NEGATIVE_COORDINATE_TOLERANCE = 1e-6
+
+
 def _transform_hits(
     hits: tuple[DrillHit, ...], parameters: DrillingParameters
 ) -> tuple[DrillHit, ...]:
@@ -92,10 +95,28 @@ def _transform_hits(
         min_x, max_x, min_y, _ = parameters.reference_bounds
     transformed = []
     for hit in hits:
-        x = max_x - hit.x if parameters.mirror_x else hit.x
         y = hit.y
+        if parameters.mirror_x:
+            # El espejo ya reubica el eje X en [0, max_x - min_x]; restar min_x
+            # de nuevo lo correria fuera de rango cuando min_x != 0.
+            x = max_x - hit.x
+        else:
+            x = hit.x - min_x if parameters.origin_lower_left else hit.x
         if parameters.origin_lower_left:
-            x -= min_x
             y -= min_y
         transformed.append(DrillHit(x, y, hit.tool, hit.diameter))
+    if parameters.origin_lower_left and parameters.reference_bounds is not None:
+        _ensure_hits_within_reference(transformed)
     return tuple(transformed)
+
+
+def _ensure_hits_within_reference(hits: list[DrillHit]) -> None:
+    """Verifica que ningun taladro caiga fuera del origen compartido con --reference-gerber."""
+    min_x = min(hit.x for hit in hits)
+    min_y = min(hit.y for hit in hits)
+    if min_x < -_NEGATIVE_COORDINATE_TOLERANCE or min_y < -_NEGATIVE_COORDINATE_TOLERANCE:
+        raise ValueError(
+            "un taladro queda fuera del contorno de referencia "
+            f"(coordenada minima X={min_x:.4f} Y={min_y:.4f}); verificar que el Gerber "
+            "de referencia (Edge_Cuts) cubra todo el archivo Excellon"
+        )

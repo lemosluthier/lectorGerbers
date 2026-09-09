@@ -5,3 +5,6 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Carpeta de salida por defecto de la GUI (gui.py: _DEFAULT_OUTPUT_SUBFOLDER)
+salida-cnc/

@@ -32,9 +32,11 @@ gerber-cnc-gui
 
 La interfaz permite seleccionar el cobre, `Edge_Cuts` y los taladros Excellon, configurar aislamiento y perforación, generar ambos G-code y crear la simulación SVG superpuesta. El campo `Diametro unico` permite usar una sola broca para todos los agujeros; esto evita cambios de herramienta, pero solo es correcto si esa broca es adecuada para todos los diámetros requeridos.
 
-Al generar, la ventana muestra dos gráficos a la derecha, uno debajo del otro: arriba el Gerber de cobre con el contorno de los taladros y abajo los recorridos de G-code. Ambos paneles aplican el mismo espejo y origen para facilitar la comparación.
+El campo `Carpeta de salida` indica dónde se guardan `isolation-gui.nc`, `drilling-gui.nc` y `board-simulation-gui.svg`. Si se deja vacío, se usa automáticamente una subcarpeta `salida-cnc` junto al Gerber de cobre (se crea sola si no existe), para no mezclar los archivos generados con los Gerbers originales; también se puede elegir cualquier otra carpeta con "Examinar". Al usar "Cargar carpeta KiCad" se sugiere `salida-cnc` dentro de esa carpeta si el campo todavía está vacío.
 
-Los dos gráficos tienen autozoom: recalculan su escala y centrado cuando se cambia el tamaño de la ventana, manteniendo las proporciones y un margen visible.
+Al generar, la ventana muestra una única vista combinada a la derecha con checkboxes para superponer o esconder cada capa: contorno, cobre, taladros de diseño, recorrido de aislamiento, taladrado G-code, recorrido rápido y el origen de coordenadas (0,0). Al usar la misma escala y posición para todo, se puede verificar de un vistazo que el recorrido de aislamiento efectivamente rodea el cobre y que cada taladro del G-code (anillo rojo) cae sobre su pad de diseño (círculo amarillo).
+
+La vista tiene autozoom (se reencuadra sola al generar un trabajo nuevo o redimensionar la ventana), y además zoom y paneo manuales: rueda del mouse para acercar/alejar centrado en el cursor, clic izquierdo y arrastrar para desplazarse, y el botón "Centrar vista" para volver al encuadre automático.
 
 También puede cargarse directamente la carpeta de fabricación exportada por KiCad con `Cargar carpeta KiCad`. Se reconocen capas como `F_Cu`, `B_Cu`, `Edge_Cuts`, archivos `.drl` y `.xln`; se selecciona automáticamente `PTH` como archivo principal de taladros y se dejan disponibles los campos para corregir la selección.
 
@@ -89,9 +91,13 @@ py -m lector_gerbers.simulation_cli `
 
 El resultado combina el aislamiento en rojo, los movimientos rápidos en gris y las perforaciones en amarillo.
 
+Si el margen entre el cobre y el borde de la placa de referencia es menor que el offset de la fresa, `--gcode` falla con un error explícito en vez de generar coordenadas fuera del área de trabajo; en ese caso hay que agrandar el contorno de referencia o generar el aislamiento sin `--reference-gerber`.
+
 ## Estado actual
 
-El parser Gerber y el lector Excellon fueron probados con archivos sintéticos y archivos reales de KiCad. Actualmente reconstruye trazos, flashes, regiones y arcos muestreados con coordenadas absolutas, incluyendo coordenadas negativas y ejes omitidos. También conserva las dimensiones de aperturas circulares, rectangulares y oblongas.
+El parser Gerber y el lector Excellon fueron probados con archivos sintéticos y **archivos reales de KiCad únicamente**. Actualmente reconstruye trazos, flashes, regiones y arcos muestreados con coordenadas absolutas, incluyendo coordenadas negativas y ejes omitidos. También conserva las dimensiones de aperturas circulares, rectangulares y oblongas.
+
+El objetivo del proyecto es soportar Gerbers de cualquier programa de diseño de PCB común (Eagle, Altium, EasyEDA, DipTrace, OrCAD, etc.), pero eso todavía no está implementado ni probado: la detección de capas por nombre de archivo, el parser de aperturas y el lector Excellon usan supuestos específicos de KiCad. El detalle de qué falta y los problemas concretos esperados con otros programas está en la Etapa 8 de [PLAN.md](PLAN.md).
 
 ## Pruebas
 

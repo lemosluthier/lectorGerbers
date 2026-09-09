@@ -56,6 +56,7 @@ def main() -> int:
     print(f"Aperturas: {', '.join(info.apertures) or 'ninguna'}")
     print(f"Comandos: {info.command_count}")
     print(f"Elementos geométricos: {len(info.primitives)}")
+    reference_bounds = _reference_bounds(args.reference_gerber)
     if args.svg:
         if args.drill:
             drill_infos = tuple(inspect_drill(path) for path in args.drill)
@@ -64,6 +65,7 @@ def main() -> int:
                     (info,), drill_infos,
                     mirror_x=args.mirror_x,
                     origin_lower_left=args.origin_lower_left,
+                    reference_bounds=reference_bounds,
                 ),
                 encoding="utf-8",
             )
@@ -73,6 +75,7 @@ def main() -> int:
                     info,
                     mirror_x=args.mirror_x,
                     origin_lower_left=args.origin_lower_left,
+                    reference_bounds=reference_bounds,
                 ),
                 encoding="utf-8",
             )
@@ -92,7 +95,7 @@ def main() -> int:
             feed_rate=args.feed_rate,
             plunge_rate=args.plunge_rate,
             spindle_speed=args.spindle_speed,
-            reference_bounds=_reference_bounds(args.reference_gerber),
+            reference_bounds=reference_bounds,
         )
         args.gcode.write_text(
             generate_isolation_gcode(

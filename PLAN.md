@@ -60,6 +60,11 @@ Construir una herramienta en Python para inspeccionar, visualizar y analizar arc
 - 2026-08-27: se documentó el estado consolidado, los archivos de salida y las limitaciones conocidas del proyecto.
 - 2026-08-27: se instaló el paquete en Python 3.14, `py -m pytest` pasó 15 pruebas y `gerber-info.exe` quedó disponible en `C:\Python314\Scripts`.
 - 2026-08-27: se robustecieron los offsets para regiones desconectadas y geometrías inválidas; la suite pasó 16 pruebas y el G-code real se simuló sin coordenadas XY negativas.
+- 2026-09-09: se corrigió un bug real en la transformación compartida espejo+origen (`isolation.transform_info`, `drilling._transform_hits`, `svg._transform_point` y el `board_transform` inline de `gui.py`): al combinar `--mirror-x` con `--origin-lower-left` y `--reference-gerber`, se restaba `min_x` dos veces, produciendo coordenadas cercanas a X=-21mm con los Gerbers de muestra reales. Ver el detalle de la fórmula corregida en `GCODE.md`.
+- 2026-09-09: se agregó una validación explícita (`ValueError`) en `isolation_paths` y `generate_drilling_gcode` para el caso en que, aun con la transformación correcta, un recorrido o un taladro caiga fuera del contorno de referencia (margen insuficiente entre el cobre y el borde de la placa), en vez de generar coordenadas negativas silenciosamente.
+- 2026-09-09: `svg.render_svg`/`render_board` ahora aceptan `reference_bounds`, igual que `isolation.py`/`drilling.py`; `cli.py --svg` lo usa automáticamente junto con `--reference-gerber`.
+- 2026-09-09: una revisión de código sobre el fix anterior detectó que `svg.render_board` dimensionaba el canvas con `reference_bounds` pero seguía anclando el dibujo al bounding box del contenido dibujado, no al del marco de referencia; el contenido quedaba mal ubicado dentro del canvas cuando no tocaba los bordes del marco (el caso normal). Se corrigió calculando el ancla a partir de las esquinas transformadas del marco (`min_x`/`max_x`/`min_y`/`max_y`), no de los puntos dibujados. La suite pasó de 31 a 32 pruebas.
+- 2026-09-09: la GUI (`gui.py`) ahora permite elegir una carpeta de salida separada de los Gerbers originales (por defecto una subcarpeta `salida-cnc`), y se fusionaron las dos vistas previas (Gerber arriba, G-code abajo) en una única vista superpuesta con checkboxes por capa (contorno, cobre, taladros de diseño, recorrido de aislamiento, taladrado G-code, recorrido rápido, origen (0,0)), zoom con la rueda del mouse centrado en el cursor, paneo con clic y arrastre, y un botón "Centrar vista". De paso se corrigió un bug de encuadre (`_canvas_transform` anclaba el contenido a una esquina en vez de centrarlo) y un problema de layout real: con ventanas de ancho normal (~1200px) la fila de checkboxes + el botón de centrar se salían del área visible y quedaban inalcanzables; se separaron en filas propias. La suite pasó de 32 a 34 pruebas (con `_resolve_output_directory`, la función pura que decide la carpeta de salida).
 
 ## Etapa 1: Base del proyecto
 
@@ -101,13 +106,15 @@ Construir una herramienta en Python para inspeccionar, visualizar y analizar arc
 
 ## Etapa 5: Proyecto completo de PCB
 
-- Cargar automáticamente un conjunto de archivos de una placa.
-- Reconocer extensiones como `.gtl`, `.gbl`, `.gto`, `.gbo`, `.gko` y `.drl`.
-- Asociar nombres de archivo con tipos de capa.
-- Crear una vista combinada de la placa.
-- Exportar la visualización a PNG o SVG.
+- [x] Cargar automáticamente un conjunto de archivos de una placa (`project.discover_fabrication_files`).
+- [x] Reconocer extensiones como `.gtl`, `.gbl`, `.gto`, `.gbo`, `.gko` y `.drl` (y `.xln`).
+- [x] Asociar nombres de archivo con tipos de capa (por sufijo, ver limitación en Etapa 8: es específico de la convención de KiCad).
+- [x] Crear una vista combinada de la placa (`svg.render_board`, usada por la GUI).
+- [ ] Exportar la visualización a PNG (hoy solo hay exportación a SVG).
 
 **Resultado esperado:** inspeccionar una placa completa desde sus archivos de fabricación.
+
+Nota (2026-09-09): esta etapa estaba mucho más avanzada de lo que reflejaba este checklist; `project.py` y `render_board` ya cubren la mayor parte desde el commit "Add fabrication file discovery and G-code simulation". Solo falta la exportación a PNG.
 
 ## Etapa 6: Calidad y distribución
 
@@ -203,8 +210,78 @@ No se debe enviar movimiento ni probar el sondeo hasta confirmar físicamente la
 controladora y el cableado. Esa comprobación es específica de la máquina y no
 puede sustituirse de forma segura por una suposición en el plan.
 
+## Etapa 8: Soporte de Gerbers de cualquier programa de diseño (no solo KiCad)
+
+### Objetivo
+
+El objetivo del proyecto es leer Gerbers/Excellon de cualquier programa de diseño
+de PCB común (Eagle, Altium, EasyEDA, DipTrace, OrCAD, Fusion 360/Ultraboard,
+etc.), no solo de KiCad. Hoy (2026-09-09) el parser, el lector Excellon y la
+detección automática de archivos fueron escritos y probados **exclusivamente**
+contra exportaciones de KiCad (ver `Gerbers/` y `tests/test_parser.py`). Esta
+etapa junta lo que falta para ampliar ese alcance y, sobre todo, los problemas
+concretos que hay que resolver o al menos detectar y reportar con un error claro
+en vez de fallar en silencio.
+
+### Problemas conocidos a esperar con Gerbers de otros programas
+
+- **Macros de apertura (`%AMxxx*%`)**: `parser._parse_aperture_definitions` solo
+  entiende aperturas estándar (`C`, `R`, `O`, `RoundRect`). Pads con forma
+  personalizada definidos con macro de apertura (frecuentes en exportaciones de
+  Eagle/Altium para relieves térmicos o pads especiales) no se reconocen: el
+  flash cae al ancho por defecto (0.15mm circular), lo que produce geometría de
+  cobre y aislamiento incorrectos sin ningún aviso.
+- **Aperturas de bloque y step-repeat (`%AB`, `%SR`)**: no están implementadas.
+  Se usan para paneles o arreglos repetidos en algunos flujos de fabricación.
+- **Modo de arco de un solo cuadrante (`G74`)**: `parser._parse_primitives`
+  siempre interpreta los offsets `I`/`J` como si estuviera en modo multi-cuadrante
+  (`G75`, el que usa KiCad). Un Gerber que use `G74` (todavía emitido por algunas
+  herramientas más viejas) generaría arcos con el barrido equivocado.
+- **Identificación de capas por nombre de archivo**: `project.py`
+  (`_COPPER_SUFFIXES`, `_REFERENCE_SUFFIXES`) reconoce específicamente los
+  sufijos de KiCad (`_F_Cu`, `_B_Cu`, `_Edge_Cuts`, `_GKO`). Otros programas usan
+  convenciones totalmente distintas (Eagle: `.cmp`/`.sol`, Altium: nombres
+  configurables por el usuario, EasyEDA: `Gerber_TopLayer.GTL`). La forma
+  correcta y agnóstica de la herramienta es leer los atributos Gerber X2
+  (`%TF.FileFunction,Copper,...*%`, `%TO.P*%`), que hoy se ignoran por completo.
+- **Formato de coordenadas Excellon**: `excellon._HIT_RE` solo admite taladros
+  con punto decimal explícito. Herramientas que exportan Excellon con supresión
+  de ceros y sin punto decimal (común fuera de KiCad) se leerían con las
+  unidades equivocadas sin ningún error.
+- **Detección de unidades y formato Gerber**: `parser.inspect_file` solo busca
+  `%MOMM*%`/`%MOIN*%` y un `%FS` con modo absoluto (`A`) y el patrón exacto
+  `X##Y##`. Un archivo con modo incremental o con la información de formato en
+  otro lugar hace que `format_match` sea `None` y el archivo se procese como si
+  no tuviera geometría (0 primitivas), sin levantar ningún error que indique
+  "formato no soportado".
+
+### Tareas pendientes
+
+- [ ] Conseguir/generar un conjunto de Gerbers de muestra de al menos dos
+      programas de diseño distintos de KiCad (por ejemplo Eagle y EasyEDA) para
+      usar como fixtures de test, igual que se hizo con `Gerbers/` para KiCad.
+- [ ] Reemplazar (o complementar) la identificación de capas por sufijo de
+      nombre de archivo en `project.py` con lectura de atributos Gerber X2
+      (`%TF.FileFunction%`), manteniendo el sufijo como respaldo.
+- [ ] Soportar el modo de arco de un solo cuadrante (`G74`) además del actual
+      (`G75`).
+- [ ] Detectar y reportar con un error explícito (no en silencio) los casos no
+      soportados: macros de apertura, aperturas de bloque/step-repeat, formato
+      `%FS` no reconocido.
+- [ ] Extender `excellon.py` para decodificar coordenadas con supresión de
+      ceros sin punto decimal, reutilizando la lógica de `_decode_coordinate`.
+- [ ] Agregar pruebas automatizadas por cada programa de diseño soportado.
+
+**Resultado esperado:** poder analizar y generar aislamiento/taladrado a partir
+de Gerbers de cualquier programa de diseño de PCB común, o recibir un error
+claro indicando qué construcción del archivo no está soportada todavía.
+
 ## Próximo paso concreto
 
 Confirmar el modelo de controladora GRBL, su versión, el esquema de entradas y el
 área útil. Luego implementar primero la conexión serie y la lectura de estados sin
 permitir aún el movimiento automático de la máquina.
+
+La Etapa 8 (soporte de Gerbers de otros programas de diseño) es independiente de
+la Etapa 7 (control GRBL) y puede avanzarse en paralelo sin ningún riesgo de
+mover la máquina física.

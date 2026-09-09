@@ -1,3 +1,5 @@
+import pytest
+
 from lector_gerbers.parser import inspect_file
 from lector_gerbers.svg import render_svg
 from lector_gerbers.excellon import inspect_drill
@@ -8,6 +10,7 @@ from lector_gerbers.isolation import IsolationParameters, isolation_paths
 from lector_gerbers.simulation import simulate_gcode, simulate_gcode_files
 from lector_gerbers.project import discover_fabrication_files
 from lector_gerbers.drilling import DrillingParameters, generate_drilling_gcode
+from lector_gerbers.gui import _resolve_output_directory
 
 
 def test_inspect_detects_common_rs274x_metadata(tmp_path):
@@ -177,6 +180,44 @@ def test_drilling_uses_reference_bounds_for_mirror(tmp_path):
     assert "G0 X8.0000 Y3.0000" in gcode
 
 
+def test_drilling_mirror_with_offset_reference_bounds_stays_non_negative(tmp_path):
+    drill = tmp_path / "board.drl"
+    drill.write_text(
+        "M48\nMETRIC\nT1C0.400\n%\nT1\nX8Y5\nM30\n",
+        encoding="ascii",
+    )
+
+    gcode = generate_drilling_gcode(
+        inspect_drill(drill),
+        DrillingParameters(
+            1.0,
+            mirror_x=True,
+            origin_lower_left=True,
+            reference_bounds=(3.0, 10.0, 3.0, 10.0),
+        ),
+    )
+
+    assert "G0 X2.0000 Y2.0000" in gcode
+
+
+def test_drilling_raises_when_hit_falls_outside_reference_bounds(tmp_path):
+    drill = tmp_path / "board.drl"
+    drill.write_text(
+        "M48\nMETRIC\nT1C0.400\n%\nT1\nX0Y0\nM30\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(ValueError, match="contorno de referencia"):
+        generate_drilling_gcode(
+            inspect_drill(drill),
+            DrillingParameters(
+                1.0,
+                origin_lower_left=True,
+                reference_bounds=(5.0, 10.0, 5.0, 10.0),
+            ),
+        )
+
+
 def test_generate_drilling_gcode_can_use_one_tool_without_changes(tmp_path):
     drill = tmp_path / "board.drl"
     drill.write_text(
@@ -214,9 +255,68 @@ def test_render_board_combines_gerber_and_drills(tmp_path):
     assert "#f2d06b" in svg
 
 
+def test_render_board_sizes_canvas_from_reference_bounds(tmp_path):
+    gerber = tmp_path / "copper.gbr"
+    gerber.write_text(
+        "%FSLAX24Y24*%\n%MOMM*%\nD10*\nX050000Y050000D02*\nX070000Y050000D01*\nM02*\n",
+        encoding="ascii",
+    )
+    info = inspect_file(gerber)
+
+    default_svg = render_board((info,))
+    reference_svg = render_board((info,), reference_bounds=(0.0, 20.0, 0.0, 20.0))
+
+    assert 'width="30.00" height="10.00"' in default_svg
+    assert 'width="210.00" height="210.00"' in reference_svg
+
+
+def test_render_board_places_content_at_its_real_position_within_reference_bounds(tmp_path):
+    gerber = tmp_path / "copper.gbr"
+    gerber.write_text(
+        "%FSLAX24Y24*%\n%MOMM*%\nD10*\nX050000Y050000D02*\nX070000Y050000D01*\nM02*\n",
+        encoding="ascii",
+    )
+    info = inspect_file(gerber)
+
+    svg = render_board((info,), reference_bounds=(0.0, 20.0, 0.0, 20.0))
+
+    # La linea esta a 5mm del origen del marco de referencia (no de su propio
+    # bounding box): debe aparecer desplazada dentro del canvas de 20x20, no
+    # anclada contra el margen como si el marco fuera su propio contenido.
+    assert 'x1="55.0000" y1="155.0000" x2="75.0000" y2="155.0000"' in svg
+
+
+def test_render_svg_forwards_reference_bounds_when_transformed(tmp_path):
+    gerber = tmp_path / "copper.gbr"
+    gerber.write_text(
+        "%FSLAX24Y24*%\n%MOMM*%\nD10*\nX050000Y050000D02*\nX070000Y050000D01*\nM02*\n",
+        encoding="ascii",
+    )
+
+    svg = render_svg(
+        inspect_file(gerber), origin_lower_left=True, reference_bounds=(0.0, 20.0, 0.0, 20.0)
+    )
+
+    assert 'width="210.00" height="210.00"' in svg
+
+
 def test_bottom_transform_mirrors_and_places_origin_at_lower_left():
-    assert _transform_point((2.0, 5.0), 2.0, 12.0, 5.0, True, True) == (8.0, 0.0)
+    # El espejo (x = max_x - x) ya deja el eje X en [0, max_x - min_x]; no debe
+    # restarse min_x de nuevo o el rango se corre a negativo cuando min_x != 0.
+    assert _transform_point((2.0, 5.0), 2.0, 12.0, 5.0, True, True) == (10.0, 0.0)
+    assert _transform_point((12.0, 5.0), 2.0, 12.0, 5.0, True, True) == (0.0, 0.0)
     assert _transform_point((2.0, 5.0), 2.0, 12.0, 5.0, False, True) == (0.0, 0.0)
+
+
+def test_transform_point_mirror_and_origin_stay_non_negative_with_offset_reference():
+    # Reproduce el caso real: reference_bounds con min_x != 0 (Edge_Cuts no
+    # arranca en el origen absoluto), espejado y origen inferior izquierdo a la
+    # vez. Antes del fix esto daba coordenadas negativas para min_x grande.
+    min_x, max_x, min_y = 21.798, 80.218, -57.571
+    for point in ((26.878, -53.761), (79.007671, -21.757)):
+        x, y = _transform_point(point, min_x, max_x, min_y, True, True)
+        assert x >= 0
+        assert y >= 0
 
 
 def test_isolation_parameters_calculate_effective_width_and_step():
@@ -261,6 +361,53 @@ def test_isolation_paths_with_origin_have_no_negative_coordinates(tmp_path):
 
     paths = isolation_paths(inspect_file(gerber), parameters, origin_lower_left=True)
 
+    assert min(point[0] for path in paths for point in path) >= 0
+    assert min(point[1] for path in paths for point in path) >= 0
+
+
+def test_isolation_paths_raise_when_offset_exceeds_reference_bounds(tmp_path):
+    gerber = tmp_path / "line.gbr"
+    gerber.write_text(
+        "%FSLAX24Y24*%\n%MOMM*%\n%ADD10C,0.200*%\nD10*\n"
+        "X000000Y000000D02*\nX020000Y000000D01*\nM02*\n",
+        encoding="ascii",
+    )
+    parameters = IsolationParameters(0.2, 60.0, 0.1, reference_bounds=(0.0, 10.0, 0.0, 5.0))
+
+    with pytest.raises(ValueError, match="contorno de referencia"):
+        isolation_paths(inspect_file(gerber), parameters, origin_lower_left=True)
+
+
+def test_isolation_paths_accept_reference_bounds_with_enough_margin(tmp_path):
+    gerber = tmp_path / "line.gbr"
+    gerber.write_text(
+        "%FSLAX24Y24*%\n%MOMM*%\n%ADD10C,0.200*%\nD10*\n"
+        "X000000Y000000D02*\nX020000Y000000D01*\nM02*\n",
+        encoding="ascii",
+    )
+    parameters = IsolationParameters(0.2, 60.0, 0.1, reference_bounds=(-1.0, 10.0, -1.0, 5.0))
+
+    paths = isolation_paths(inspect_file(gerber), parameters, origin_lower_left=True)
+
+    assert paths
+    assert min(point[0] for path in paths for point in path) >= 0
+    assert min(point[1] for path in paths for point in path) >= 0
+
+
+def test_isolation_paths_mirror_with_offset_reference_bounds_stay_non_negative(tmp_path):
+    gerber = tmp_path / "line.gbr"
+    gerber.write_text(
+        "%FSLAX24Y24*%\n%MOMM*%\n%ADD10C,0.200*%\nD10*\n"
+        "X050000Y050000D02*\nX070000Y050000D01*\nM02*\n",
+        encoding="ascii",
+    )
+    parameters = IsolationParameters(0.2, 60.0, 0.1, reference_bounds=(3.0, 10.0, 3.0, 10.0))
+
+    paths = isolation_paths(
+        inspect_file(gerber), parameters, mirror_x=True, origin_lower_left=True
+    )
+
+    assert paths
     assert min(point[0] for path in paths for point in path) >= 0
     assert min(point[1] for path in paths for point in path) >= 0
 
@@ -386,3 +533,20 @@ def test_simulate_gcode_files_superimposes_isolation_and_drilling(tmp_path):
     assert "Simulacion: isolation.nc + drilling.nc" in svg
     assert svg.count("stroke=\"#e85d4a\"") == 1
     assert svg.count("<circle") == 1
+
+
+def test_resolve_output_directory_defaults_to_subfolder_next_to_copper(tmp_path):
+    copper = tmp_path / "Gerbers" / "board_B_Cu.gbr"
+
+    output = _resolve_output_directory("", copper)
+
+    assert output == tmp_path / "Gerbers" / "salida-cnc"
+
+
+def test_resolve_output_directory_uses_explicit_choice(tmp_path):
+    copper = tmp_path / "Gerbers" / "board_B_Cu.gbr"
+    chosen = tmp_path / "otra-carpeta"
+
+    output = _resolve_output_directory(f"  {chosen}  ", copper)
+
+    assert output == chosen

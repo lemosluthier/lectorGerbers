@@ -101,14 +101,39 @@ def isolation_paths(
         )
         boundary = copper.buffer(offset).boundary
         paths.extend(_line_coordinates(boundary))
-    if origin_lower_left and paths and parameters.reference_bounds is None:
-        min_path_x = min(point[0] for path in paths for point in path)
-        min_path_y = min(point[1] for path in paths for point in path)
-        paths = [
-            tuple((x - min_path_x, y - min_path_y) for x, y in path)
-            for path in paths
-        ]
+    if origin_lower_left and paths:
+        if parameters.reference_bounds is None:
+            min_path_x = min(point[0] for path in paths for point in path)
+            min_path_y = min(point[1] for path in paths for point in path)
+            paths = [
+                tuple((x - min_path_x, y - min_path_y) for x, y in path)
+                for path in paths
+            ]
+        else:
+            _ensure_paths_within_reference(paths)
     return tuple(paths)
+
+
+_NEGATIVE_COORDINATE_TOLERANCE = 1e-6
+
+
+def _ensure_paths_within_reference(paths) -> None:
+    """Verifica que ningun recorrido de aislamiento caiga fuera del origen compartido.
+
+    Con --reference-gerber el origen se fija segun el contorno de referencia, no
+    segun los propios recorridos: si el offset de la fresa empuja un recorrido mas
+    alla de ese contorno, se recorta a coordenadas negativas silenciosamente en vez
+    de desplazar el origen (eso rompería la alineacion compartida con el taladrado).
+    """
+    min_x = min(point[0] for path in paths for point in path)
+    min_y = min(point[1] for path in paths for point in path)
+    if min_x < -_NEGATIVE_COORDINATE_TOLERANCE or min_y < -_NEGATIVE_COORDINATE_TOLERANCE:
+        raise ValueError(
+            "el recorrido de aislamiento queda fuera del contorno de referencia "
+            f"(coordenada minima X={min_x:.4f} Y={min_y:.4f}); agrandar el margen del "
+            "Gerber de referencia (Edge_Cuts) para que incluya el offset de la fresa, "
+            "o generar el aislamiento sin --reference-gerber"
+        )
 
 
 def transform_info(
@@ -133,9 +158,12 @@ def transform_info(
     def transform(point):
         x, y = point
         if mirror_x:
+            # El espejo ya reubica el eje X en [0, max_x - min_x]; restar min_x
+            # de nuevo lo correria fuera de rango cuando min_x != 0.
             x = max_x - x
-        if origin_lower_left:
+        elif origin_lower_left:
             x -= min_x
+        if origin_lower_left:
             y -= min_y
         return x, y
 
