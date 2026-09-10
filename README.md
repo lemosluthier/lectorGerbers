@@ -2,7 +2,7 @@
 
 Proyecto Python para inspeccionar y visualizar archivos Gerber de placas de circuito impreso.
 
-El estado y la hoja de ruta del proyecto están documentados en [PLAN.md](PLAN.md). Los requisitos técnicos del futuro G-code están en [GCODE.md](GCODE.md).
+El estado y la hoja de ruta del proyecto están documentados en [PLAN.md](PLAN.md). Los requisitos técnicos del futuro G-code están en [GCODE.md](GCODE.md). El análisis de factibilidad sobre el control de la máquina (GRBL/FluidNC, jog, home, sondeo y mapa de alturas) está en [ANALISIS_GCODE_SENDER.md](ANALISIS_GCODE_SENDER.md).
 
 ## Requisitos
 

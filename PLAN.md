@@ -65,6 +65,7 @@ Construir una herramienta en Python para inspeccionar, visualizar y analizar arc
 - 2026-09-09: `svg.render_svg`/`render_board` ahora aceptan `reference_bounds`, igual que `isolation.py`/`drilling.py`; `cli.py --svg` lo usa automáticamente junto con `--reference-gerber`.
 - 2026-09-09: una revisión de código sobre el fix anterior detectó que `svg.render_board` dimensionaba el canvas con `reference_bounds` pero seguía anclando el dibujo al bounding box del contenido dibujado, no al del marco de referencia; el contenido quedaba mal ubicado dentro del canvas cuando no tocaba los bordes del marco (el caso normal). Se corrigió calculando el ancla a partir de las esquinas transformadas del marco (`min_x`/`max_x`/`min_y`/`max_y`), no de los puntos dibujados. La suite pasó de 31 a 32 pruebas.
 - 2026-09-09: la GUI (`gui.py`) ahora permite elegir una carpeta de salida separada de los Gerbers originales (por defecto una subcarpeta `salida-cnc`), y se fusionaron las dos vistas previas (Gerber arriba, G-code abajo) en una única vista superpuesta con checkboxes por capa (contorno, cobre, taladros de diseño, recorrido de aislamiento, taladrado G-code, recorrido rápido, origen (0,0)), zoom con la rueda del mouse centrado en el cursor, paneo con clic y arrastre, y un botón "Centrar vista". De paso se corrigió un bug de encuadre (`_canvas_transform` anclaba el contenido a una esquina en vez de centrarlo) y un problema de layout real: con ventanas de ancho normal (~1200px) la fila de checkboxes + el botón de centrar se salían del área visible y quedaban inalcanzables; se separaron en filas propias. La suite pasó de 32 a 34 pruebas (con `_resolve_output_directory`, la función pura que decide la carpeta de salida).
+- 2026-09-10: se hizo un análisis de factibilidad sobre construir un módulo propio de G-code sender (conexión GRBL/FluidNC, jog, home, touch-off, sondeo y mapa de alturas) para la Etapa 7. Conclusión: no conviene desarrollarlo propio — ver [ANALISIS_GCODE_SENDER.md](ANALISIS_GCODE_SENDER.md) y el replanteo de la Etapa 7 más abajo.
 
 ## Etapa 1: Base del proyecto
 
@@ -128,7 +129,20 @@ Nota (2026-09-09): esta etapa estaba mucho más avanzada de lo que reflejaba est
 
 ## Etapa 7: Panel de control CNC y mapa de alturas
 
-### Objetivo
+> **2026-09-10: replanteada tras un análisis de factibilidad.** Ver
+> [ANALISIS_GCODE_SENDER.md](ANALISIS_GCODE_SENDER.md). La conclusión es **no
+> desarrollar un sender/controlador GRBL propio**: existen herramientas
+> maduras (bCNC, Candle, Universal Gcode Sender) que ya resuelven jog, home,
+> touch-off y autolevel/mapa de alturas para PCB, incluyendo soporte
+> explícito de FluidNC en al menos dos de ellas. La "Implementación prevista"
+> de esta etapa queda como referencia histórica de lo que se había pensado
+> construir; el plan de acción vigente es el de la sección "Recomendación"
+> del análisis (probar herramientas existentes contra el hardware real antes
+> de escribir código, y dejar como mucho una integración liviana — abrir el
+> `.nc` generado en la herramienta elegida, o importar su mapa de alturas
+> para dibujarlo en la vista combinada de la GUI).
+
+### Objetivo (histórico, ver replanteo arriba)
 
 Agregar a la GUI un panel para conectar una controladora GRBL por USB/serie,
 supervisar sus estados y enviar trabajos G-code con controles de seguridad.
